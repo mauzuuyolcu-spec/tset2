@@ -25,7 +25,6 @@ document.addEventListener("DOMContentLoaded", () => {
   let dmTarget = null;
   let isAdmin = false;
 
-  // Renk
   function getUserColor(name) {
     const colors = ["var(--u1)","var(--u2)","var(--u3)","var(--u4)","var(--u5)","var(--u6)","var(--u7)","var(--u8)"];
     let hash = 0;
@@ -33,7 +32,6 @@ document.addEventListener("DOMContentLoaded", () => {
     return colors[Math.abs(hash) % colors.length];
   }
 
-  // Mesaj gönderme
   function sendMessage(text, fileData, fileType) {
     if (!socket) return;
     if (!text && !fileData) return;
@@ -44,7 +42,6 @@ document.addEventListener("DOMContentLoaded", () => {
     socket.emit("send_message", payload);
   }
 
-  // Mesaj render
   function renderMessage(msg, isOwn = false) {
     const row = document.createElement("div");
     row.className = `msg-row${isOwn ? " own" : ""}`;
@@ -185,7 +182,6 @@ document.addEventListener("DOMContentLoaded", () => {
     messageInput.placeholder = "Mesaj yaz, dosya ekle...";
   }
 
-  // Admin yetkisi alma
   adminBtn.addEventListener("click", () => {
     if (isAdmin) {
       renderSystemMessage("✅ Zaten admin yetkisine sahipsiniz.");
@@ -200,7 +196,6 @@ document.addEventListener("DOMContentLoaded", () => {
     socket.emit("admin_auth", { code: code.trim() });
   });
 
-  // --- KATILIM ---
   joinForm.addEventListener("submit", (e) => {
     e.preventDefault();
     const username = usernameInput.value.trim();
@@ -211,7 +206,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     joinError.classList.add("hidden");
 
-    // ✅ Dayanıklı bağlantı ayarları
+    // Dayanıklı bağlantı ayarları
     socket = io({
       reconnection: true,
       reconnectionAttempts: 10,
@@ -277,23 +272,17 @@ document.addEventListener("DOMContentLoaded", () => {
         isAdmin = true;
         adminBtn.classList.add("active");
         renderSystemMessage("✅ Admin yetkisi alındı! Artık kullanıcıları banlayabilirsiniz.");
-        // user_list zaten güncellenecek, ekstra bir şey yapmaya gerek yok
       } else {
         renderSystemMessage(`❌ ${data.message || "Geçersiz kod."}`);
       }
     });
 
-    // 🔌 Bağlantı durumu yönetimi
     socket.on("disconnect", () => {
       renderSystemMessage("⚠️ Bağlantı kesildi, yeniden bağlanmaya çalışılıyor...");
     });
 
     socket.on("reconnect", (attempt) => {
       renderSystemMessage(`✅ Bağlantı yeniden kuruldu (deneme ${attempt}).`);
-      // Otomatik olarak yeniden join olması için sunucuya tekrar join gönderebiliriz,
-      // ancak sunucu zaten session'ı hatırlamıyor, bu yüzden manuel join yapmak gerekebilir.
-      // Ama socket yeniden bağlandığında "connect" event'i tekrar çalışır ve join gönderir,
-      // o yüzden burada ekstra bir şey yapmıyoruz.
     });
 
     socket.on("reconnect_error", (err) => {
@@ -305,7 +294,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  // --- MESAJ GÖNDERME ---
   function handleSend() {
     const text = messageInput.value.trim();
     let fileData = null;
@@ -346,7 +334,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // TYPING
   let typingTimeout = null;
   messageInput.addEventListener("input", () => {
     if (socket && myUsername) {
