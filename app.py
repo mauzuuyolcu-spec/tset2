@@ -100,8 +100,6 @@ def handle_admin_auth(data):
         if request.sid in connected_users:
             connected_users[request.sid]["admin"] = True
             emit("admin_approved", {"status": True})
-            # Admin yetkisi alındığında herkese duyurma (isteğe bağlı)
-            # emit("new_message", {"username": "Sistem", "text": "🔑 Bir kullanıcı admin yetkisi aldı.", "time": datetime.now().strftime("%H:%M")}, broadcast=True)
     else:
         emit("admin_approved", {"status": False, "message": "Geçersiz kod."})
 
@@ -123,7 +121,6 @@ def handle_ban_user(data):
 
     admin_username = admin_data["username"]
 
-    # Kendini banlayamaz
     if target == admin_username:
         emit("new_message", {
             "username": "Sistem",
@@ -132,7 +129,6 @@ def handle_ban_user(data):
         })
         return
 
-    # Hedef çevrimiçi mi?
     target_sid = None
     for sid, ud in connected_users.items():
         if ud["username"] == target:
@@ -146,21 +142,17 @@ def handle_ban_user(data):
         })
         return
 
-    # Banla
     banned_users[target] = time.time() + BAN_DURATION
 
-    # Herkese duyur
     emit("new_message", {
         "username": "Sistem",
         "text": f"🚫 {target} 1 saatliğine banlandı.",
         "time": datetime.now().strftime("%H:%M")
     }, broadcast=True)
 
-    # Banlanan kişiyi odadan at
     connected_users.pop(target_sid, None)
     emit("user_left", {"username": target, "online_count": online_count()}, broadcast=True)
 
-    # Listeyi güncelle
     user_list = [u["username"] for u in connected_users.values()]
     emit("user_list", {"users": user_list}, broadcast=True)
 
@@ -183,7 +175,7 @@ def handle_send_message(data):
     text = (data or {}).get("text", "").strip()[:500]
     image_data = (data or {}).get("image", "").strip()
     video_data = (data or {}).get("video", "").strip()
-    to_user = (data or {}).get("to", "").strip()  # Özel mesaj hedefi
+    to_user = (data or {}).get("to", "").strip()
 
     if not text and not image_data and not video_data:
         return
@@ -217,7 +209,6 @@ def handle_send_message(data):
     if video_data:
         message["video"] = video_data
 
-    # Özel mesaj mı?
     if to_user and to_user in {u["username"] for u in connected_users.values()}:
         message["is_dm"] = True
         message["to"] = to_user
@@ -229,13 +220,11 @@ def handle_send_message(data):
         if recipient_sid:
             emit("new_message", message, room=request.sid)
             emit("new_message", message, room=recipient_sid)
-            # Geçmişe ekle (DM'ler de saklanır)
             message_history.append(message)
             if len(message_history) > MAX_HISTORY:
                 message_history.pop(0)
             return
 
-    # Herkese açık mesaj
     message_history.append(message)
     if len(message_history) > MAX_HISTORY:
         message_history.pop(0)
