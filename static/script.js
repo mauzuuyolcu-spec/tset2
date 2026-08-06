@@ -17,11 +17,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const dmInfo = document.getElementById("dm-info");
   const dmTargetName = document.getElementById("dm-target-name");
   const dmCancelBtn = document.getElementById("dm-cancel-btn");
+  const adminBtn = document.getElementById("admin-btn");
 
   let socket = null;
   let myUsername = "";
   let typingTimer = null;
-  let dmTarget = null; // Özel mesaj gönderilecek kişi
+  let dmTarget = null;
+  let isAdmin = false; // İstemci tarafı yetki
 
   // Renk
   function getUserColor(name) {
@@ -38,14 +40,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const payload = { text };
     if (fileData && fileType === "image") payload.image = fileData;
     if (fileData && fileType === "video") payload.video = fileData;
-    // DM hedefi varsa ekle
-    if (dmTarget) {
-      payload.to = dmTarget;
-    }
+    if (dmTarget) payload.to = dmTarget;
     socket.emit("send_message", payload);
   }
 
-  // Mesaj render (DM etiketi ekle)
+  // Mesaj render
   function renderMessage(msg, isOwn = false) {
     const row = document.createElement("div");
     row.className = `msg-row${isOwn ? " own" : ""}`;
@@ -69,7 +68,6 @@ document.addEventListener("DOMContentLoaded", () => {
     timeSpan.className = "msg-time";
     timeSpan.textContent = msg.time || "";
     meta.appendChild(timeSpan);
-    // DM etiketi
     if (msg.is_dm) {
       const dmLabel = document.createElement("span");
       dmLabel.className = "dm-label";
@@ -127,7 +125,7 @@ document.addEventListener("DOMContentLoaded", () => {
     users.forEach(username => {
       const li = document.createElement("li");
       li.className = "user-item";
-      // Avatar
+
       const avatar = document.createElement("span");
       avatar.className = "user-avatar";
       avatar.style.background = getUserColor(username);
@@ -139,9 +137,8 @@ document.addEventListener("DOMContentLoaded", () => {
       nameSpan.textContent = username;
       li.appendChild(nameSpan);
 
-      // Butonlar (kendine değilse)
       if (username !== myUsername) {
-        // DM butonu
+        // DM butonu (her zaman göster)
         const dmBtn = document.createElement("button");
         dmBtn.className = "user-dm-btn";
         dmBtn.textContent = "💬";
@@ -152,20 +149,21 @@ document.addEventListener("DOMContentLoaded", () => {
         });
         li.appendChild(dmBtn);
 
-        // Ban butonu (sadece admin yetkisi yok, herkes ban atabilir - basit tutalım)
-        const banBtn = document.createElement("button");
-        banBtn.className = "user-ban-btn";
-        banBtn.textContent = "🚫";
-        banBtn.title = "Bu kullanıcıyı banla (1 saat)";
-        banBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (confirm(`${username} kullanıcısını 1 saatliğine banlamak istediğine emin misin?`)) {
-            socket.emit("ban_user", { username });
-          }
-        });
-        li.appendChild(banBtn);
+        // Ban butonu – sadece admin ise göster
+        if (isAdmin) {
+          const banBtn = document.createElement("button");
+          banBtn.className = "user-ban-btn";
+          banBtn.textContent = "🚫";
+          banBtn.title = "Bu kullanıcıyı banla (1 saat)";
+          banBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (confirm(`${username} kullanıcısını 1 saatliğine banlamak istediğine emin misin?`)) {
+              socket.emit("ban_user", { username });
+            }
+          });
+          li.appendChild(banBtn);
+        }
       } else {
-        // Kendisi - sadece "Sen" etiketi
         const meSpan = document.createElement("span");
         meSpan.className = "user-me";
         meSpan.textContent = "(sen)";
@@ -176,7 +174,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // DM modunu başlat
+  // DM modu
   function startDM(username) {
     dmTarget = username;
     dmTargetName.textContent = username;
@@ -185,12 +183,27 @@ document.addEventListener("DOMContentLoaded", () => {
     messageInput.focus();
   }
 
-  // DM modundan çık
   function cancelDM() {
     dmTarget = null;
     dmInfo.classList.add("hidden");
     messageInput.placeholder = "Mesaj yaz, dosya ekle...";
   }
+
+  // --- Admin yetkisi alma ---
+  adminBtn.addEventListener("click", () => {
+    if (isAdmin) {
+      // Zaten admin ise bilgi ver
+      renderSystemMessage("✅ Zaten admin yetkisine sahipsiniz.");
+      return;
+    }
+    const code = prompt("Admin kodunu girin:");
+    if (code === null) return; // iptal
+    if (code.trim() === "") {
+      renderSystemMessage("❌ Kod boş olamaz.");
+      return;
+    }
+    socket.emit("admin_auth", { code: code.trim() });
+  });
 
   // --- KATILIM ---
   joinForm.addEventListener("submit", (e) => {
@@ -240,8 +253,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     socket.on("new_message", (msg) => {
-      // Eğer DM mesajıysa ve bana veya benim gönderdiğim bir mesajsa göster
-      // (sunucu zaten sadece ilgili kişilere gönderiyor)
       const isOwn = (msg.username === myUsername);
       renderMessage(msg, isOwn);
     });
@@ -258,6 +269,26 @@ document.addEventListener("DOMContentLoaded", () => {
     socket.on("user_stop_typing", () => {
       typingIndicator.classList.add("hidden");
     });
+
+    // Admin doğrulama cevabı
+    socket.on("admin_approved", (data) => {
+      if (data.status) {
+        isAdmin = true;
+        adminBtn.classList.add("active");
+        renderSystemMessage("✅ Admin yetkisi alındı! Artık kullanıcıları banlayabilirsiniz.");
+        // Listeyi yenile (ban butonlarını göstermek için)
+        // Mevcut listeyi yeniden renderla
+        const currentUsers = Array.from(userListEl.querySelectorAll(".user-name")).map(el => el.textContent);
+        if (currentUsers.length) updateUserList(currentUsers);
+        // Aslında user_list event'i zaten gelir ama güvenlik için
+        socket.emit("get_user_list"); // opsiyonel, ama biz zaten user_list'i alıyoruz
+      } else {
+        renderSystemMessage(`❌ ${data.message || "Geçersiz kod."}`);
+      }
+    });
+
+    // Sunucudan user_list tekrar gelsin diye (admin olduktan sonra)
+    // Ama her değişiklikte zaten geliyor.
 
     socket.on("disconnect", () => renderSystemMessage("⚠️ Bağlantı koptu, yeniden bağlanılıyor..."));
   });
@@ -283,7 +314,6 @@ document.addEventListener("DOMContentLoaded", () => {
         sendMessage(text, fileData, fileType);
         messageInput.value = "";
         fileInput.value = "";
-        // DM modundan çık (isteğe bağlı)
         cancelDM();
       };
       reader.readAsDataURL(file);
@@ -293,7 +323,7 @@ document.addEventListener("DOMContentLoaded", () => {
     sendMessage(text, null, null);
     messageInput.value = "";
     fileInput.value = "";
-    cancelDM(); // mesaj gönderince DM modundan çık
+    cancelDM();
   }
 
   sendBtn.addEventListener("click", handleSend);
