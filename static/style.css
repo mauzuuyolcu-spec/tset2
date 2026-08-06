@@ -183,7 +183,7 @@ button:focus-visible {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-width: 0; /* taşmayı önle */
+  min-width: 0;
 }
 
 .user-panel {
@@ -512,7 +512,7 @@ button:focus-visible {
 #send-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
 #send-btn:active { transform: translateY(0); }
 
-/* ===== ADMIN BUTONU (eklenen) ===== */
+/* ===== ADMIN BUTONU ===== */
 .admin-btn {
   background: transparent;
   border: none;
