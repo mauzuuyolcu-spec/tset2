@@ -1,5 +1,6 @@
 """
 Frekans - Video & Resim Paylaşımlı, Ban Sistemi, Özel Mesaj (DM)
+Admin yetkisi: 7777 kodu ile etkinleştirilir.
 """
 
 import os
@@ -16,7 +17,8 @@ app.config["SECRET_KEY"] = "bu-anahtari-degistir"
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # --- Bellekteki veriler ---
-connected_users = {}        # { sid: username }
+# connected_users: { sid: {"username": str, "admin": bool} }
+connected_users = {}
 message_history = []        # son 50 mesaj
 banned_users = {}           # { username: ban_bitis_zamani (timestamp) }
 
@@ -27,6 +29,7 @@ ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 ALLOWED_VIDEO_TYPES = {"video/mp4", "video/webm", "video/ogg"}
 
 BAN_DURATION = 3600  # 1 saat (saniye)
+ADMIN_CODE = "7777"
 
 def online_count():
     return len(connected_users)
@@ -50,10 +53,12 @@ def handle_connect():
 
 @socketio.on("disconnect")
 def handle_disconnect():
-    username = connected_users.pop(request.sid, None)
-    if username:
+    user_data = connected_users.pop(request.sid, None)
+    if user_data:
+        username = user_data["username"]
         emit("user_left", {"username": username, "online_count": online_count()}, broadcast=True)
-        emit("user_list", {"users": list(connected_users.values())}, broadcast=True)
+        user_list = [u["username"] for u in connected_users.values()]
+        emit("user_list", {"users": user_list}, broadcast=True)
 
 @socketio.on("join")
 def handle_join(data):
@@ -65,13 +70,13 @@ def handle_join(data):
         emit("join_error", {"message": "Bu kullanıcı 1 saatliğine yasaklanmıştır."})
         return
 
-    existing = set(connected_users.values())
+    existing = {u["username"] for u in connected_users.values()}
     original, n = username, 2
     while username in existing:
         username = f"{original}{n}"
         n += 1
 
-    connected_users[request.sid] = username
+    connected_users[request.sid] = {"username": username, "admin": False}
 
     emit("joined", {
         "username": username,
@@ -84,18 +89,39 @@ def handle_join(data):
         "online_count": online_count(),
     }, broadcast=True, include_self=False)
 
-    emit("user_list", {"users": list(connected_users.values())}, broadcast=True)
+    user_list = [u["username"] for u in connected_users.values()]
+    emit("user_list", {"users": user_list}, broadcast=True)
 
-# --- BAN OLAYI (butondan gelen) ---
+# --- Admin doğrulama ---
+@socketio.on("admin_auth")
+def handle_admin_auth(data):
+    code = (data or {}).get("code", "").strip()
+    if code == ADMIN_CODE:
+        if request.sid in connected_users:
+            connected_users[request.sid]["admin"] = True
+            emit("admin_approved", {"status": True})
+            # Admin yetkisi alındığında herkese duyurma (isteğe bağlı)
+            # emit("new_message", {"username": "Sistem", "text": "🔑 Bir kullanıcı admin yetkisi aldı.", "time": datetime.now().strftime("%H:%M")}, broadcast=True)
+    else:
+        emit("admin_approved", {"status": False, "message": "Geçersiz kod."})
+
+# --- BAN OLAYI (sadece admin) ---
 @socketio.on("ban_user")
 def handle_ban_user(data):
-    admin_username = connected_users.get(request.sid)
-    if not admin_username:
+    admin_data = connected_users.get(request.sid)
+    if not admin_data or not admin_data.get("admin", False):
+        emit("new_message", {
+            "username": "Sistem",
+            "text": "❌ Bu işlem için admin yetkisi gerekir.",
+            "time": datetime.now().strftime("%H:%M")
+        })
         return
 
     target = (data or {}).get("username", "").strip()
     if not target:
         return
+
+    admin_username = admin_data["username"]
 
     # Kendini banlayamaz
     if target == admin_username:
@@ -106,7 +132,13 @@ def handle_ban_user(data):
         })
         return
 
-    if target not in connected_users.values():
+    # Hedef çevrimiçi mi?
+    target_sid = None
+    for sid, ud in connected_users.items():
+        if ud["username"] == target:
+            target_sid = sid
+            break
+    if not target_sid:
         emit("new_message", {
             "username": "Sistem",
             "text": f"❌ {target} çevrimiçi değil.",
@@ -125,21 +157,20 @@ def handle_ban_user(data):
     }, broadcast=True)
 
     # Banlanan kişiyi odadan at
-    for sid, uname in list(connected_users.items()):
-        if uname == target:
-            connected_users.pop(sid, None)
-            emit("user_left", {"username": target, "online_count": online_count()}, broadcast=True)
-            break
+    connected_users.pop(target_sid, None)
+    emit("user_left", {"username": target, "online_count": online_count()}, broadcast=True)
 
     # Listeyi güncelle
-    emit("user_list", {"users": list(connected_users.values())}, broadcast=True)
+    user_list = [u["username"] for u in connected_users.values()]
+    emit("user_list", {"users": user_list}, broadcast=True)
 
 # --- MESAJ GÖNDERME (DM desteği) ---
 @socketio.on("send_message")
 def handle_send_message(data):
-    sender = connected_users.get(request.sid)
-    if not sender:
+    sender_data = connected_users.get(request.sid)
+    if not sender_data:
         return
+    sender = sender_data["username"]
 
     if is_banned(sender):
         emit("new_message", {
@@ -154,11 +185,9 @@ def handle_send_message(data):
     video_data = (data or {}).get("video", "").strip()
     to_user = (data or {}).get("to", "").strip()  # Özel mesaj hedefi
 
-    # Sadece metin, resim veya video olabilir
     if not text and not image_data and not video_data:
         return
 
-    # Resim / video doğrulama (önceki gibi)
     if image_data:
         try:
             header, encoded = image_data.split(",", 1)
@@ -181,7 +210,7 @@ def handle_send_message(data):
         "username": sender,
         "text": text,
         "time": datetime.now().strftime("%H:%M"),
-        "is_dm": False  # varsayılan
+        "is_dm": False
     }
     if image_data:
         message["image"] = image_data
@@ -189,26 +218,22 @@ def handle_send_message(data):
         message["video"] = video_data
 
     # Özel mesaj mı?
-    if to_user and to_user in connected_users.values():
+    if to_user and to_user in {u["username"] for u in connected_users.values()}:
         message["is_dm"] = True
         message["to"] = to_user
-        # Göndericiye ve alıcıya gönder, diğerlerine değil
-        # Alıcının sid'sini bul
         recipient_sid = None
-        for sid, uname in connected_users.items():
-            if uname == to_user:
+        for sid, ud in connected_users.items():
+            if ud["username"] == to_user:
                 recipient_sid = sid
                 break
         if recipient_sid:
-            # Göndericiye (kendine) gönder
             emit("new_message", message, room=request.sid)
-            # Alıcıya gönder
             emit("new_message", message, room=recipient_sid)
-            # Geçmişe ekle (isteğe bağlı, ama DM'leri de saklayabiliriz)
+            # Geçmişe ekle (DM'ler de saklanır)
             message_history.append(message)
             if len(message_history) > MAX_HISTORY:
                 message_history.pop(0)
-            return  # broadcast yapma, sadece iki kişiye gitti
+            return
 
     # Herkese açık mesaj
     message_history.append(message)
@@ -216,18 +241,18 @@ def handle_send_message(data):
         message_history.pop(0)
     emit("new_message", message, broadcast=True)
 
-# --- TYPING (DM'de de çalışsın ama basit olsun, herkese yayın) ---
+# --- TYPING ---
 @socketio.on("typing")
 def handle_typing(_data):
-    username = connected_users.get(request.sid)
-    if username and not is_banned(username):
-        emit("user_typing", {"username": username}, broadcast=True, include_self=False)
+    user_data = connected_users.get(request.sid)
+    if user_data and not is_banned(user_data["username"]):
+        emit("user_typing", {"username": user_data["username"]}, broadcast=True, include_self=False)
 
 @socketio.on("stop_typing")
 def handle_stop_typing(_data):
-    username = connected_users.get(request.sid)
-    if username:
-        emit("user_stop_typing", {"username": username}, broadcast=True, include_self=False)
+    user_data = connected_users.get(request.sid)
+    if user_data:
+        emit("user_stop_typing", {"username": user_data["username"]}, broadcast=True, include_self=False)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
