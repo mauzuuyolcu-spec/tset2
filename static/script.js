@@ -23,7 +23,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let myUsername = "";
   let typingTimer = null;
   let dmTarget = null;
-  let isAdmin = false; // İstemci tarafı yetki
+  let isAdmin = false;
 
   // Renk
   function getUserColor(name) {
@@ -33,7 +33,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return colors[Math.abs(hash) % colors.length];
   }
 
-  // Mesaj gönderme (DM desteği)
+  // Mesaj gönderme
   function sendMessage(text, fileData, fileType) {
     if (!socket) return;
     if (!text && !fileData) return;
@@ -119,7 +119,6 @@ document.addEventListener("DOMContentLoaded", () => {
     onlineCountEl.textContent = `${count} çevrimiçi`;
   }
 
-  // Kullanıcı listesini güncelle
   function updateUserList(users) {
     userListEl.innerHTML = "";
     users.forEach(username => {
@@ -138,7 +137,6 @@ document.addEventListener("DOMContentLoaded", () => {
       li.appendChild(nameSpan);
 
       if (username !== myUsername) {
-        // DM butonu (her zaman göster)
         const dmBtn = document.createElement("button");
         dmBtn.className = "user-dm-btn";
         dmBtn.textContent = "💬";
@@ -149,7 +147,6 @@ document.addEventListener("DOMContentLoaded", () => {
         });
         li.appendChild(dmBtn);
 
-        // Ban butonu – sadece admin ise göster
         if (isAdmin) {
           const banBtn = document.createElement("button");
           banBtn.className = "user-ban-btn";
@@ -174,7 +171,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // DM modu
   function startDM(username) {
     dmTarget = username;
     dmTargetName.textContent = username;
@@ -189,15 +185,14 @@ document.addEventListener("DOMContentLoaded", () => {
     messageInput.placeholder = "Mesaj yaz, dosya ekle...";
   }
 
-  // --- Admin yetkisi alma ---
+  // Admin yetkisi alma
   adminBtn.addEventListener("click", () => {
     if (isAdmin) {
-      // Zaten admin ise bilgi ver
       renderSystemMessage("✅ Zaten admin yetkisine sahipsiniz.");
       return;
     }
     const code = prompt("Admin kodunu girin:");
-    if (code === null) return; // iptal
+    if (code === null) return;
     if (code.trim() === "") {
       renderSystemMessage("❌ Kod boş olamaz.");
       return;
@@ -216,7 +211,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     joinError.classList.add("hidden");
 
-    socket = io();
+    // ✅ Dayanıklı bağlantı ayarları
+    socket = io({
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000
+    });
 
     socket.on("connect", () => {
       socket.emit("join", { username });
@@ -270,27 +272,37 @@ document.addEventListener("DOMContentLoaded", () => {
       typingIndicator.classList.add("hidden");
     });
 
-    // Admin doğrulama cevabı
     socket.on("admin_approved", (data) => {
       if (data.status) {
         isAdmin = true;
         adminBtn.classList.add("active");
         renderSystemMessage("✅ Admin yetkisi alındı! Artık kullanıcıları banlayabilirsiniz.");
-        // Listeyi yenile (ban butonlarını göstermek için)
-        // Mevcut listeyi yeniden renderla
-        const currentUsers = Array.from(userListEl.querySelectorAll(".user-name")).map(el => el.textContent);
-        if (currentUsers.length) updateUserList(currentUsers);
-        // Aslında user_list event'i zaten gelir ama güvenlik için
-        socket.emit("get_user_list"); // opsiyonel, ama biz zaten user_list'i alıyoruz
+        // user_list zaten güncellenecek, ekstra bir şey yapmaya gerek yok
       } else {
         renderSystemMessage(`❌ ${data.message || "Geçersiz kod."}`);
       }
     });
 
-    // Sunucudan user_list tekrar gelsin diye (admin olduktan sonra)
-    // Ama her değişiklikte zaten geliyor.
+    // 🔌 Bağlantı durumu yönetimi
+    socket.on("disconnect", () => {
+      renderSystemMessage("⚠️ Bağlantı kesildi, yeniden bağlanmaya çalışılıyor...");
+    });
 
-    socket.on("disconnect", () => renderSystemMessage("⚠️ Bağlantı koptu, yeniden bağlanılıyor..."));
+    socket.on("reconnect", (attempt) => {
+      renderSystemMessage(`✅ Bağlantı yeniden kuruldu (deneme ${attempt}).`);
+      // Otomatik olarak yeniden join olması için sunucuya tekrar join gönderebiliriz,
+      // ancak sunucu zaten session'ı hatırlamıyor, bu yüzden manuel join yapmak gerekebilir.
+      // Ama socket yeniden bağlandığında "connect" event'i tekrar çalışır ve join gönderir,
+      // o yüzden burada ekstra bir şey yapmıyoruz.
+    });
+
+    socket.on("reconnect_error", (err) => {
+      renderSystemMessage(`⚠️ Yeniden bağlanma hatası: ${err.message}`);
+    });
+
+    socket.on("reconnect_failed", () => {
+      renderSystemMessage("❌ Yeniden bağlanma başarısız, sayfayı yenileyin.");
+    });
   });
 
   // --- MESAJ GÖNDERME ---
@@ -334,7 +346,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // --- TYPING ---
+  // TYPING
   let typingTimeout = null;
   messageInput.addEventListener("input", () => {
     if (socket && myUsername) {
@@ -344,10 +356,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // --- DOSYA SEÇ ---
   fileBtn.addEventListener("click", () => fileInput.click());
-
-  // --- DM İPTAL ---
   dmCancelBtn.addEventListener("click", cancelDM);
 
   console.log("Frekans video, ban ve DM sistemi aktif!");
