@@ -1,14 +1,13 @@
 """
-Frekans - Video & Resim Paylaşımlı, Ban Sistemi, Özel Mesaj (DM)
+Frekans - Video & Resim Paylaşımlı, Ban Sistemi, Özel Mesaj (DM), Mesaj Silme (Admin)
 Admin yetkisi: 7777 kodu ile etkinleştirilir.
-Admin mesaj silebilir.
 """
 
 import os
 import random
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
@@ -157,7 +156,7 @@ def handle_ban_user(data):
     user_list = [u["username"] for u in connected_users.values()]
     emit("user_list", {"users": user_list}, broadcast=True)
 
-# --- MESAJ GÖNDERME (DM desteği) ---
+# --- MESAJ GÖNDERME (DM desteği + id) ---
 @socketio.on("send_message")
 def handle_send_message(data):
     sender_data = connected_users.get(request.sid)
@@ -199,11 +198,8 @@ def handle_send_message(data):
         except:
             return
 
-    # Benzersiz mesaj ID'si oluştur
-    msg_id = str(uuid.uuid4())
-
     message = {
-        "id": msg_id,
+        "id": str(uuid.uuid4()),
         "username": sender,
         "text": text,
         "time": datetime.now().strftime("%H:%M"),
@@ -226,7 +222,6 @@ def handle_send_message(data):
         if recipient_sid:
             emit("new_message", message, room=request.sid)
             emit("new_message", message, room=recipient_sid)
-            # DM mesajlarını da geçmişe ekleyelim
             message_history.append(message)
             if len(message_history) > MAX_HISTORY:
                 message_history.pop(0)
@@ -241,7 +236,6 @@ def handle_send_message(data):
 # --- MESAJ SİLME (sadece admin) ---
 @socketio.on("delete_message")
 def handle_delete_message(data):
-    # Admin kontrolü
     admin_data = connected_users.get(request.sid)
     if not admin_data or not admin_data.get("admin", False):
         emit("new_message", {
@@ -255,11 +249,9 @@ def handle_delete_message(data):
     if msg_id is None:
         return
 
-    # Mesajı bul ve kaldır
     global message_history
     for idx, msg in enumerate(message_history):
         if msg.get("id") == msg_id:
-            # Sadece herkese açık mesajları silelim, DM ise silme
             if msg.get("is_dm", False):
                 emit("new_message", {
                     "username": "Sistem",
@@ -267,12 +259,10 @@ def handle_delete_message(data):
                     "time": datetime.now().strftime("%H:%M")
                 })
                 return
-            deleted_msg = message_history.pop(idx)
-            # Silindi bilgisini yayınla
+            message_history.pop(idx)
             emit("message_deleted", {"message_id": msg_id}, broadcast=True)
             return
 
-    # Bulunamadıysa
     emit("new_message", {
         "username": "Sistem",
         "text": "❌ Mesaj bulunamadı veya zaten silinmiş.",
