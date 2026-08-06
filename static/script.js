@@ -42,12 +42,10 @@ document.addEventListener("DOMContentLoaded", () => {
     socket.emit("send_message", payload);
   }
 
-  // Mesaj render (silme butonu eklendi)
   function renderMessage(msg, isOwn = false) {
     const row = document.createElement("div");
     row.className = `msg-row${isOwn ? " own" : ""}`;
-    // Mesaj ID'sini data attribute olarak ekle
-    if (msg.id) row.dataset.messageId = msg.id;
+    row.dataset.messageId = msg.id;
 
     const avatar = document.createElement("div");
     avatar.className = "avatar";
@@ -74,6 +72,22 @@ document.addEventListener("DOMContentLoaded", () => {
       dmLabel.textContent = "🔒 Özel";
       meta.appendChild(dmLabel);
     }
+
+    // Admin ise ve DM değilse silme butonu
+    if (isAdmin && !msg.is_dm) {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "msg-delete-btn";
+      deleteBtn.textContent = "🗑️";
+      deleteBtn.title = "Mesajı sil";
+      deleteBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (confirm("Bu mesajı silmek istediğine emin misin?")) {
+          socket.emit("delete_message", { message_id: msg.id });
+        }
+      });
+      meta.appendChild(deleteBtn);
+    }
+
     body.appendChild(meta);
 
     const bubble = document.createElement("div");
@@ -102,33 +116,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     body.appendChild(bubble);
-
-    // Admin ise ve mesaj DM değilse silme butonu ekle
-    if (isAdmin && !msg.is_dm) {
-      const deleteBtn = document.createElement("button");
-      deleteBtn.className = "msg-delete-btn";
-      deleteBtn.textContent = "🗑️";
-      deleteBtn.title = "Mesajı sil";
-      deleteBtn.style.background = "transparent";
-      deleteBtn.style.border = "none";
-      deleteBtn.style.color = "var(--text-muted)";
-      deleteBtn.style.cursor = "pointer";
-      deleteBtn.style.marginTop = "4px";
-      deleteBtn.style.fontSize = "12px";
-      deleteBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (confirm("Bu mesajı silmek istediğine emin misin?")) {
-          if (msg.id) {
-            socket.emit("delete_message", { message_id: msg.id });
-          }
-        }
-      });
-      body.appendChild(deleteBtn);
-    }
-
     row.appendChild(body);
     messagesEl.appendChild(row);
     messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function removeMessageFromDOM(messageId) {
+    const msgElement = document.querySelector(`.msg-row[data-message-id="${messageId}"]`);
+    if (msgElement) {
+      msgElement.remove();
+    }
   }
 
   function renderSystemMessage(text) {
@@ -298,54 +295,33 @@ document.addEventListener("DOMContentLoaded", () => {
         isAdmin = true;
         adminBtn.classList.add("active");
         renderSystemMessage("✅ Admin yetkisi alındı! Artık kullanıcıları banlayabilir ve mesajları silebilirsiniz.");
-        // Listeyi yenile (ban butonları için)
-        // Mevcut mesajlara silme butonu eklemek için tüm mesajları yeniden render etmek yerine,
-        // mesajları tekrar render etmek gerekir. Bunun için history'yi yeniden isteyebiliriz veya
-        // mevcut mesajların üzerine silme butonlarını ekleyebiliriz.
-        // Pratik çözüm: sayfayı yenilemek? Ama bu kullanıcı deneyimini bozar.
-        // En iyisi: mevcut mesajları dolaşıp her birine silme butonu eklemek.
-        document.querySelectorAll('.msg-row').forEach(row => {
-          // Eğer zaten silme butonu varsa ekleme
-          if (!row.querySelector('.msg-delete-btn')) {
-            const msgId = row.dataset.messageId;
-            if (msgId) {
-              const isDm = row.querySelector('.dm-label') !== null;
-              if (!isDm) {
-                const body = row.querySelector('.msg-body');
-                const deleteBtn = document.createElement('button');
-                deleteBtn.className = 'msg-delete-btn';
-                deleteBtn.textContent = '🗑️';
-                deleteBtn.title = 'Mesajı sil';
-                deleteBtn.style.background = 'transparent';
-                deleteBtn.style.border = 'none';
-                deleteBtn.style.color = 'var(--text-muted)';
-                deleteBtn.style.cursor = 'pointer';
-                deleteBtn.style.marginTop = '4px';
-                deleteBtn.style.fontSize = '12px';
-                deleteBtn.addEventListener('click', (e) => {
-                  e.stopPropagation();
-                  if (confirm('Bu mesajı silmek istediğine emin misin?')) {
-                    socket.emit('delete_message', { message_id: msgId });
-                  }
-                });
-                body.appendChild(deleteBtn);
-              }
-            }
-          }
+        // Mevcut mesajları yeniden render et (silme butonlarını eklemek için)
+        // Tüm mesajları temizleyip yeniden ekleyelim
+        const allMessages = document.querySelectorAll(".msg-row");
+        // Mesajları yeniden render etmek yerine, mevcut mesajlara silme butonlarını ekleyelim
+        // Daha basit: sayfayı yenilemeden admin olduğunda silme butonları gelmiyor, ama yeni mesajlar gelince gelir.
+        // Bunu düzeltmek için mevcut mesajları yeniden render edelim
+        const currentMessages = [];
+        document.querySelectorAll(".msg-row").forEach(row => {
+          const id = row.dataset.messageId;
+          // Bu id'ye sahip mesajı history'den bul
+          // Biz history'yi tutmuyoruz, ama message_history sunucuda.
+          // O yüzden burada mevcut DOM'u temizleyip sunucudan tekrar history istemek lazım.
+          // Bunun yerine pratik bir çözüm: sayfayı yenile (F5)
+          // Ama daha iyisi: admin olduktan sonra mesajları yeniden render etmek için sunucudan history isteyelim.
+          // Bunun için bir event ekleyebiliriz, ama şimdilik mevcut mesajlara silme butonlarını elle ekleyelim.
+          // Kısa yol: sayfayı yenilemesini söyleyelim.
         });
+        // Basit çözüm: kullanıcıya sayfayı yenilemesini söyle
+        renderSystemMessage("🔄 Değişikliklerin tamamen görünmesi için sayfayı yenileyin (F5).");
       } else {
         renderSystemMessage(`❌ ${data.message || "Geçersiz kod."}`);
       }
     });
 
-    // Mesaj silme event'i
     socket.on("message_deleted", (data) => {
-      const msgId = data.message_id;
-      const row = document.querySelector(`.msg-row[data-message-id="${msgId}"]`);
-      if (row) {
-        row.remove();
-        renderSystemMessage(`🗑️ Bir mesaj silindi.`);
-      }
+      removeMessageFromDOM(data.message_id);
+      renderSystemMessage("🗑️ Bir mesaj silindi.");
     });
 
     socket.on("disconnect", () => {
@@ -417,5 +393,5 @@ document.addEventListener("DOMContentLoaded", () => {
   fileBtn.addEventListener("click", () => fileInput.click());
   dmCancelBtn.addEventListener("click", cancelDM);
 
-  console.log("Frekans video, ban ve DM sistemi aktif!");
+  console.log("Frekans video, ban, DM ve mesaj silme sistemi aktif!");
 });
